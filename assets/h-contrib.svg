@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 96" width="1280" height="96" role="img" aria-label="contributions">
+<title>contributions</title>
+<style>text{font-family:ui-monospace,'JetBrains Mono',SFMono-Regular,Menlo,Consolas,monospace}.bar{animation:a 1.4s cubic-bezier(.16,1,.3,1) both}@keyframes a{from{transform:scaleX(0)}to{transform:scaleX(1)}}.car{animation:c 1s steps(1) infinite}@keyframes c{50%{opacity:0}}@media (prefers-reduced-motion:reduce){*{animation:none!important}}</style>
+<defs><linearGradient id="f" x1="0" x2="1"><stop offset="0" stop-color="#FFD23A"/><stop offset=".5" stop-color="#FF8A1F"/><stop offset="1" stop-color="#F0402A"/></linearGradient></defs>
+<text x="0" y="22" font-size="13" fill="#9C9C9C" letter-spacing="1"><tspan fill="#FF8A1F">&gt;</tspan> ./git-stats.sh</text>
+<text x="0" y="66" font-size="38" font-weight="800" fill="#F5F3F1" letter-spacing="-1">contributions<tspan class="car" fill="#FF8A1F">_</tspan></text>
+<rect x="0" y="86" width="1280" height="1" fill="#1F1F1F"/>
+<rect class="bar" x="0" y="85" width="220" height="3" fill="url(#f)"/>
+</svg>

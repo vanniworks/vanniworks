@@ -12,11 +12,15 @@
 
 **`> software engineer and student at finki. i build websites, saas products and apps for clients locally and globally.`**
 
-<sub>personal site of jovan "vanni" vasilevski. plain js, a pile of hand-written canvas effects, and everything drawn in 0/1.</sub>
-
 </div>
 
 <br>
+
+<img src="assets/h-contrib.svg" alt="contributions" width="100%">
+
+<img src="assets/contrib.svg" alt="contributions in the last year" width="100%">
+
+<br><br>
 
 <img src="assets/h-contact.svg" alt="contact" width="100%">
 
