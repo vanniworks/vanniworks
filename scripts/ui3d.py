@@ -260,41 +260,47 @@ def header(fname, cmd, title):
 
 # ---------------------------------------------------------------- bio line
 def about():
-    H = 92
-    line = "software engineer and student at finki. i build websites, saas products and apps for clients locally and globally."
-    size = 15.5
-    gl, lw = M5.glyphs(line, size, 0, 0, 0.2)
-    x0 = (W - lw) / 2 + 10
-    y = 58
+    H = 150
+    lines = ["software engineer and student at finki.", "i build websites, saas products and apps for clients locally and globally."]
+    full = " ".join(lines)
+    size = 23
     rnd = random.Random(7)
-    chars = []
+    chars, clips = [], []
     css = [".ch{animation:ch .5s steps(1) both}@keyframes ch{from{opacity:0}to{opacity:1}}",
            ".bn{animation:bn .5s steps(1) both}@keyframes bn{0%{opacity:0}1%{opacity:1}99%{opacity:1}100%{opacity:0}}",
            ".car{animation:blink 1s steps(1) infinite}@keyframes blink{50%{opacity:0}}",
            ".glint{animation:gl 7s ease-in-out 3s infinite}@keyframes gl{0%{transform:translateX(-300px)}40%,100%{transform:translateX(1500px)}}",
            RM]
-    for i, (c, d, cx, adv) in enumerate(gl):
-        if c == " ":
-            continue
-        delay = 0.25 + i * 0.012
-        bit, _ = M7.path(rnd.choice("01"), size, x0 + cx, y, 0)
-        chars.append(f'<path class="bn" style="animation-delay:{delay - 0.5:.3f}s;animation-duration:.5s" d="{bit}" fill="{ORA}"/>')
-        dd, _ = M5.path(c, size, x0 + cx, y, 0)
-        chars.append(f'<path class="ch" style="animation-delay:{delay - 0.5:.3f}s" d="{dd}"/>')
-    prompt = txt(">", size, x0 - 22, y, ORA, M7, tracking=0)
-    car_x = x0 + lw + 6
-    sub = txt("// whoami", 12, W / 2, 24, "#5c5c5c", M4, anchor="middle", tracking=1.5)
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="{line}">
-<title>{line}</title>
+    k = 0
+    car = None
+    for li, line in enumerate(lines):
+        gl, lw = M5.glyphs(line, size, 0, 0, 0.3)
+        x0 = (W - lw) / 2
+        y = 62 + li * 40
+        col = BONE if li else YEL
+        for c, d, cx, adv in gl:
+            k += 1
+            if c == " ":
+                continue
+            delay = 0.25 + k * 0.014
+            bit, _ = M7.path(rnd.choice("01"), size, x0 + cx, y, 0)
+            chars.append(f'<path class="bn" style="animation-delay:{delay - 0.5:.3f}s" d="{bit}" fill="{ORA}"/>')
+            dd, _ = M5.path(c, size, x0 + cx, y, 0)
+            chars.append(f'<path class="ch" style="animation-delay:{delay - 0.5:.3f}s" d="{dd}" fill="{col}"/>')
+        clips.append(M5.path(line, size, x0, y, 0.3)[0])
+        car = (x0 + lw + 8, y)
+        if li == 0:
+            chars.append(txt(">", size, x0 - 30, y, ORA, M7, tracking=0))
+    sub = txt("// whoami", 13, W / 2, 22, "#5c5c5c", M4, anchor="middle", tracking=2)
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="{full}">
+<title>{full}</title>
 <defs><style>{"".join(css)}</style>
-<linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="{YEL}"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
-<clipPath id="tc"><path d="{M5.path(line, size, x0, y, 0.2)[0]}"/></clipPath></defs>
+<linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="tc"><path d="{"".join(clips)}"/></clipPath></defs>
 {sub}
-{prompt}
-<g fill="{BONE}">{"".join(chars)}</g>
-<g clip-path="url(#tc)"><rect class="glint" x="0" y="{y - 20}" width="240" height="26" fill="url(#g)"/></g>
-<rect class="car" x="{n(car_x)}" y="{y - 13}" width="9" height="16" fill="{ORA}"/>
-<path d="M{n(x0 - 22)} {y + 16}H{n(car_x + 9)}" stroke="{DIM}"/>
+{"".join(chars)}
+<g clip-path="url(#tc)"><rect class="glint" x="0" y="30" width="260" height="{H - 30}" fill="url(#g)" opacity=".8"/></g>
+<rect class="car" x="{n(car[0])}" y="{car[1] - 19}" width="12" height="23" fill="{ORA}"/>
 </svg>'''
     write("about.svg", svg)
 
@@ -398,16 +404,16 @@ def keycap(fname, label, sub_label, accent, icon, phase, wide=3.3, w_px=420, h_p
     top_svg = poly_anim(P["cp"][0], P["cf"][0], None, DUR, stroke=edge)
     tf, an = aff_anim(top_aff, DUR)
     tw, td = 2 * t_hw * 100, 2 * t_hd * 100
-    lab_size = 30 if len(label) < 12 else 26
+    lab_size = 40 if len(label) < 12 else 32
     lw = width_of(label, lab_size, M8, -0.5)
     has_icon = bool(icon)
-    gx = -(lw + (46 if has_icon else 0)) / 2
-    oy = -5 if sub_label else 0
-    legend_svg = f'<g transform="translate({n(gx + 13)} {n(oy - 9)})">{icon_svg(icon, legend)}</g>' if has_icon else ""
-    lx = gx + (46 if has_icon else 0)
+    gx = -(lw + (56 if has_icon else 0)) / 2
+    oy = -7 if sub_label else 0
+    legend_svg = f'<g transform="translate({n(gx + 16)} {n(oy - 12)}) scale(1.25)">{icon_svg(icon, legend)}</g>' if has_icon else ""
+    lx = gx + (56 if has_icon else 0)
     legend_svg += txt(label, lab_size, lx, oy + 1, legend, M8, tracking=-0.5)
     if sub_label:
-        legend_svg += txt(sub_label, 15, lx + 1, oy + 24, mix(legend, cap, .45) if cap == ORA else mix(BONE, cap, .4), M5, tracking=0.6)
+        legend_svg += txt(sub_label, 19, lx + 1, oy + 31, mix(legend, cap, .45) if cap == ORA else mix(BONE, cap, .4), M5, tracking=0.6)
     dish = (f'<path d="M{n(-tw / 2)} {n(-td / 2)}h{n(tw)}v{n(td)}h{n(-tw)}z" fill="url(#dish)"/>')
     sheen = f'<rect class="sheen" x="{n(-tw)}" y="{n(-td / 2)}" width="{n(tw * 0.45)}" height="{n(td)}" fill="url(#sh)"/>'
     clip = f'<clipPath id="tc"><rect x="{n(-tw / 2)}" y="{n(-td / 2)}" width="{n(tw)}" height="{n(td)}" rx="12"/></clipPath>'
