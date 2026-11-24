@@ -9,7 +9,7 @@
 //     flicker get an overlay
 //   - the wordmark: still fades for the portrait; the glyphs that flash cream are overlays,
 //     grouped by their delay (to the nearest 0.25s)
-// It also renders the contributions panel's two 3D creatures (scripts/creatures.js) into
+// It also renders the contributions panel's two 3D fighters (scripts/creatures.js) into
 // assets/src/figures.json, which contrib.py embeds, so the GitHub Action keeps building the
 // panel with plain Python.
 // Usage: npm run bake  (uses your installed Google Chrome; `npm i` once first)
@@ -133,26 +133,25 @@ for (const l of layers) {
   l.href = `data:image/${l.opaque ? 'jpeg' : 'webp'};base64,${buf.toString('base64')}`;
 }
 
-/* the contributions panel's two creatures: 3D (scripts/creatures.js), rendered piece by piece
-   (body, throwing arm, hit flash) for each side, with the points the panel aims at */
+/* the contributions panel's two fighters: a 3D model (scripts/creatures.js) rendered into a
+   strip of frames per side, with the points the panel aims from and at */
 {
   const page = await browser.newPage({ viewport: { width: 400, height: 400 } });
-  // serve the repo (scripts, node_modules/three) to the page
+  // serve the repo (scripts, the model, node_modules/three) to the page
   await page.route('http://bake.local/**', (route) => {
     const path = decodeURIComponent(new URL(route.request().url()).pathname);
-    const type = path.endsWith('.html') ? 'text/html' : 'text/javascript';
+    const type = path.endsWith('.html') ? 'text/html' : path.endsWith('.glb') ? 'model/gltf-binary' : 'text/javascript';
     route.fulfill({ body: readFileSync(`${ROOT}${path.slice(1)}`), contentType: type });
   });
+  page.on('pageerror', (e) => console.error('page:', e.message));
+  page.on('console', (m) => m.type() === 'error' && console.error('page:', m.text()));
   const out = {};
-  for (const side of ['L', 'R'])
-    for (const part of ['body', 'arm', 'flash']) {
-      await page.goto(`http://bake.local/scripts/creatures.html?side=${side}&part=${part}`);
-      const { box, points } = await page.waitForFunction(() => window.result).then((h) => h.jsonValue());
-      const buf = await page.locator('canvas').screenshot({ omitBackground: true, type: 'webp', quality: 88 });
-      out[`${part}${side}`] = { x: box.x, y: box.y, w: box.w, h: box.h, points, href: `data:image/webp;base64,${buf.toString('base64')}` };
-    }
+  for (const side of ['L', 'R']) {
+    await page.goto(`http://bake.local/scripts/creatures.html?side=${side}`);
+    out[`sprite${side}`] = await page.waitForFunction(() => window.result, null, { timeout: 60000 }).then((h) => h.jsonValue());
+  }
   writeFileSync(`${ROOT}assets/src/figures.json`, JSON.stringify(out));
-  console.log(`figures.json: 6 pieces, ${(JSON.stringify(out).length / 1024).toFixed(0)} KB`);
+  console.log(`figures.json: 2 fighters, ${(JSON.stringify(out).length / 1024).toFixed(0)} KB`);
 }
 
 await browser.close();

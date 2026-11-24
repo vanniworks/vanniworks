@@ -14,7 +14,7 @@
   { "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
 </script>
 <script type="module">
-  import { render } from '/scripts/creatures.js';
+  import { strip } from '/scripts/creatures.js';
   const q = new URLSearchParams(location.search);
-  window.result = await render({ side: q.get('side'), part: q.get('part') });
+  window.result = await strip({ side: q.get('side') });
 </script>

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Build assets/contrib.svg.
 
-Two horned 3D creatures hurl spinning contribution cubes at
+Two armoured 3D fighters punch spinning contribution cubes at
 each other across a 3D city of contribution bars, seen in perspective. Every hit
 sends a shockwave across the floor and glitches the count, an extruded 3D number
 built from 0/1 cells.
 
 Built to stay light to animate (phones): the city is a few dozen merged paths,
-and the two creatures are 3D models (scripts/creatures.js) rendered once by
-`npm run bake` into assets/src/figures.json. Without that file they fall back to
-the old 0/1 text figures.
+and the two fighters are a 3D model (scripts/creatures.js: RobotExpressive by
+Tomás Laulhé, CC0, restyled) rendered once by `npm run bake` into strips of frames
+in assets/src/figures.json. Without that file they fall back to 0/1 text figures.
 
 The grid is made up (it spells VANNI). The numbers are real, from the GitHub
 GraphQL API.
@@ -292,8 +292,8 @@ def arm(facing, rng, fill):
 FIGS_JSON = os.path.join(ROOT, "assets", "src", "figures.json")
 
 GCOLS, GROWS = 53, 7
-LEVEL_H = [0.06, 0.45, 0.85, 1.35, 2.4, 3.5]  # bar heights per level, world units
-ROW_P, BAR_D = 2.1, 1.7  # the rows' spacing and the bars' depth: long blocks along wide streets
+LEVEL_H = [0.06, 0.2, 0.36, 0.52, 1.0, 1.35]  # bar heights per level, world units (the letters are 5)
+ROW_P, BAR_D = 1.25, 1.0  # the rows' spacing and the bars' depth: near-square cells, so the letters read
 LEVEL_TOP = ["#191919", "#5a160c", "#a02a18", "#e0401f", ORA, YEL]
 
 
@@ -330,20 +330,21 @@ def poly(pts):
 def make_grid(rng):
     """Made-up activity that spells VANNI, levels 0..5 (same recipe as before)."""
     cells = [[0] * GCOLS for _ in range(GROWS)]
-    font = {"V": ["101", "101", "101", "101", "010"], "A": ["010", "101", "111", "101", "101"],
-            "N": ["101", "111", "111", "111", "101"], "I": ["111", "010", "010", "010", "111"]}
+    # 5 wide, so the N gets its diagonal and every letter reads from above
+    font = {"V": ["10001", "10001", "10001", "01010", "00100"], "A": ["01110", "10001", "11111", "10001", "10001"],
+            "N": ["10001", "11001", "10101", "10011", "10001"], "I": ["11111", "00100", "00100", "00100", "11111"]}
     for x in range(GCOLS):
         wave = 0.5 + 0.5 * math.sin(x / 4.3)
         for y in range(GROWS):
             r = rng.random()
             cells[y][x] = 0 if r < 0.42 - wave * 0.18 else 1 if r < 0.74 else 2 if r < 0.92 else 3
     word = "VANNI"
-    start = (GCOLS - (len(word) * 4 - 1)) // 2
+    start = (GCOLS - (len(word) * 6 - 1)) // 2
     for i, chx in enumerate(word):
         for y, line in enumerate(font[chx]):
             for dx, bit in enumerate(line):
                 if bit == "1":
-                    cells[y + 1][start + i * 4 + dx] = 5 if rng.random() < 0.55 else 4
+                    cells[y + 1][start + i * 6 + dx] = 5  # every letter cell the same: tall and bright
     return cells
 
 
@@ -411,14 +412,6 @@ def figure_parts(rng):
         arm_svg, hand = arm(facing, rng, pal[3])
         parts[side] = dict(body=fbody, flash=fflash, arm=arm_svg, eyes=eyes, shoulder=shoulder, chest=chest, hand=hand)
     return parts
-
-
-def piece(baked, key, vector, cls):
-    """a baked picture of a figure piece when there is one, else the vector text"""
-    b = baked.get(key)
-    if b:
-        return f'<image x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" href="{b["href"]}"/>'
-    return f'<g class="{cls}">{vector}</g>'
 
 
 def build(d):
@@ -530,7 +523,7 @@ def build(d):
                     f'<text x="{x + 12}" y="{by + 37}" font-size="16" font-weight="800" fill="{YEL if i == 0 else CREAM}">{v}</text>')
 
     # ---------- the city
-    cam = Cam(W / 2, 426, 372, (0.0, 24.0, -12.0), 52)
+    cam = Cam(W / 2, 402, 410, (0.0, 30.0, -4.0), 70)
     cells_g = make_grid(rng)
     # a light band sweeping across every top, left to right
     x_left, _ = cam.p(-GCOLS / 2, 0, 0)
@@ -560,39 +553,68 @@ def build(d):
     css.append(".eye{animation:ey 2.8s steps(1) infinite}@keyframes ey{0%,100%{opacity:1}44%{opacity:.55}46%{opacity:1}90%{opacity:0}92%{opacity:1}}")
     figs = {}
     for side, x0, facing, glowc in (("L", lx, 1, YEL), ("R", rx, -1, ORA)):
-        p = dict(parts[side])
-        # the 3D creatures know where their own eyes, chest, shoulder and hand ended up
-        if baked.get("body" + side):
-            pts = baked["body" + side]["points"]
-            p.update(eyes=pts["eyes"], chest=pts["chest"], shoulder=pts["shoulder"])
-        if baked.get("arm" + side):
-            p.update(hand=baked["arm" + side]["points"]["hand"])
         tp, hp = (throws[side] % T) / T * 100, (hits[side] % T) / T * 100
         s = facing
+        css.append(f"@keyframes k{side}{{0%,{hp:.2f}%{{transform:translateX(0)}}{hp + 1.5:.2f}%{{transform:translateX({-22 * s}px)}}"
+                   f"{hp + 14:.2f}%,100%{{transform:translateX(0)}}}}.k{side}{{animation:k{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}")
+        sp = baked.get("sprite" + side)
+        if sp:
+            # the 3D fighter: one strip of frames, stepped through on the fight's own timeline
+            fw, fh, bx, by_ = sp["box"]["w"], sp["box"]["h"], sp["box"]["x"], sp["box"]["y"]
+            n_idle, n_punch, n_hit = sp["frames"]["idle"], sp["frames"]["punch"], sp["frames"]["hit"]
+            total = n_idle + n_punch + n_hit
+            pd = 0.8 / (n_punch - 1)  # a punch frame, seconds
+            hd = 0.075  # a hit frame
+            p_start = throws[side] - sp["punchAt"] * pd  # the fist is furthest out at the throw
+            h_start = hits[side]
+
+            def frame_at(t):
+                for start, n, d, first in ((p_start, n_punch, pd, n_idle), (h_start, n_hit, hd, n_idle + n_punch)):
+                    k = (t - start) % T
+                    if k < n * d:
+                        return first + int(k / d)
+                return int(t / (3.33 / n_idle)) % n_idle  # breathing
+
+            kf, last = [], None
+            steps = int(T * 24)
+            for i in range(steps):
+                t = i * T / steps
+                f = frame_at(t)
+                if f != last:
+                    kf.append(f"{i / steps * 100:.2f}%{{transform:translateX({-f * fw}px)}}")
+                    last = f
+            css.append(f"@keyframes s{side}{{{''.join(kf)}100%{{transform:translateX({-frame_at(0) * fw}px)}}}}"
+                       f".s{side}{{animation:s{side} {T}s steps(1) infinite}}")
+            body.append(
+                f'<g transform="translate({x0} {fy})"><g class="k{side}">'
+                f'<svg x="{bx}" y="{by_}" width="{fw}" height="{fh}" viewBox="0 0 {fw} {fh}" overflow="hidden">'
+                f'<image class="s{side}" width="{fw * total}" height="{fh}" preserveAspectRatio="none" href="{sp["href"]}"/></svg>'
+                f"</g></g>"
+            )
+            figs[side] = dict(hand=(x0 + sp["points"]["hand"][0], fy + sp["points"]["hand"][1]),
+                              chest=(x0 + sp["points"]["chest"][0], fy + sp["points"]["chest"][1]))
+            continue
+
+        # no baked fighters: the old 0/1 figures, as vector text
+        p = dict(parts[side])
+        css.append(".hov{animation:hv 2.2s ease-in-out infinite alternate}@keyframes hv{from{transform:translateY(0)}to{transform:translateY(-9px)}}")
+        css.append(".eye{animation:ey 2.8s steps(1) infinite}@keyframes ey{0%,100%{opacity:1}44%{opacity:.55}46%{opacity:1}90%{opacity:0}92%{opacity:1}}")
         css.append(f"@keyframes a{side}{{0%,{tp - 13:.2f}%{{transform:rotate(0)}}{tp - 1:.2f}%{{transform:rotate({-75 * s}deg)}}"
                    f"{tp + 2:.2f}%{{transform:rotate({48 * s}deg)}}{tp + 18:.2f}%,100%{{transform:rotate(0)}}}}"
-                   f".a{side}{{animation:a{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}")
-        css.append(f"@keyframes k{side}{{0%,{hp:.2f}%{{transform:translateX(0)}}{hp + 1.5:.2f}%{{transform:translateX({-22 * s}px)}}"
-                   f"{hp + 14:.2f}%,100%{{transform:translateX(0)}}}}.k{side}{{animation:k{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}"
+                   f".a{side}{{animation:a{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}"
                    f"@keyframes f{side}{{0%,{hp:.2f}%{{opacity:0}}{hp + .3:.2f}%{{opacity:.95}}{hp + 2:.2f}%{{opacity:.2}}{hp + 2.8:.2f}%{{opacity:.7}}{hp + 7:.2f}%,100%{{opacity:0}}}}"
                    f".f{side}{{animation:f{side} {T}s linear infinite}}")
-        css.append(f"@keyframes o{side}{{0%,{tp - 16:.2f}%{{transform:scale(0) rotate(0);opacity:0}}{tp - 2:.2f}%{{transform:scale(1.15) rotate(180deg);opacity:1}}"
-                   f"{tp:.2f}%{{transform:scale(1.5) rotate(200deg);opacity:1}}{tp + .6:.2f}%,100%{{transform:scale(0);opacity:0}}}}"
-                   f".o{side}{{animation:o{side} {T}s linear infinite}}")
         eye_svg = "".join(
             f'<ellipse cx="{ex}" cy="{ey}" rx="16" ry="8" fill="url(#ey)" opacity=".7"/>'
             f'<rect class="eye" x="{ex - 6}" y="{ey - 1.5}" width="12" height="3" fill="{CREAM}"/>'
             for ex, ey in p["eyes"])
-        orb = cube(16, (CREAM, glowc, shade(glowc, 0.6)))
-        orb = (f'<g transform="translate({p["hand"][0]} {p["hand"][1]})"><g class="o{side}">'
-               f'<ellipse rx="24" ry="24" fill="url(#ey)"/>{orb}</g></g>')
         sh = p["shoulder"]
         body.append(
             f'<g transform="translate({x0} {fy})"><g class="k{side}"><g class="hov" style="animation-delay:-{1.1 if side == "R" else 0}s">'
-            f'{piece(baked, "body" + side, p["body"], "fig")}'
-            f'<g transform="translate({sh[0]} {sh[1]})"><g class="a{side}">{piece(baked, "arm" + side, p["arm"], "arm")}{orb}</g></g>'
+            f'<g class="fig">{p["body"]}</g>'
+            f'<g transform="translate({sh[0]} {sh[1]})"><g class="a{side}"><g class="arm">{p["arm"]}</g></g></g>'
             f'{eye_svg}'
-            f'<g class="f{side}" opacity="0">{piece(baked, "flash" + side, p["flash"], "fig")}</g>'
+            f'<g class="f{side}" opacity="0"><g class="fig">{p["flash"]}</g></g>'
             f"</g></g></g>"
         )
         figs[side] = dict(hand=(x0 + sh[0] + p["hand"][0], fy + sh[1] + p["hand"][1]),
