@@ -1,5 +1,5 @@
-"""3D UI for the profile README: keycap buttons, extruded headers, the binary bio
-line and the forge (binary fire around the V).
+"""3D UI for the profile README: keycap buttons, extruded headers and the binary
+bio line. (The fire is a real render: scripts/forge_render.py -> assets/forge.webp.)
 
 Every 3D bit is projected here (perspective, backface culling, lighting) and baked
 into SMIL/CSS, so it runs inside GitHub's <img> sandbox: no JS, no filters, no
@@ -669,4 +669,3 @@ if __name__ == "__main__":
     keycap("btn-site.svg", "site", "vanniworks.com", ORA, "globe", 0.12, aria="site: vanniworks.com")
     keycap("btn-linkedin.svg", "linkedin", "jovanvasilevski", YEL, "in", 0.22, aria="linkedin: jovanvasilevski")
     keycap("btn-instagram.svg", "instagram", "@vasilevski_j", RED, "ig", 0.32, aria="instagram: @vasilevski_j")
-    forge()

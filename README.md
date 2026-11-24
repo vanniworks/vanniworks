@@ -26,8 +26,8 @@
 <a href="https://www.linkedin.com/in/jovanvasilevski"><img src="assets/btn-linkedin.svg?v=3" alt="linkedin: jovanvasilevski" width="32%"></a>
 <a href="https://www.instagram.com/vasilevski_j"><img src="assets/btn-instagram.svg?v=3" alt="instagram: @vasilevski_j" width="32%"></a>
 
-<br><br>
+<br>
 
-<img src="assets/fire.svg?v=3" alt="binary fire around the V. built in 0 and 1, ohrid / skopje, mk" width="100%">
+<img src="assets/forge.webp" alt="the V standing in volumetric fire. built in 0 and 1, ohrid / skopje, mk" width="100%">
 
 </div>

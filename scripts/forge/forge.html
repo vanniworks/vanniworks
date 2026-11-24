@@ -1,0 +1,299 @@
+<!doctype html>
+<!-- The forge: volumetric fire around the V, rendered frame by frame for assets/forge.webp.
+     Driven headless by scripts/forge_render.py; every motion loops exactly over T = 0..1. -->
+<meta charset="utf-8">
+<body style="margin:0;background:#000">
+<pre id="o"></pre>
+<script id="fs" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+uniform vec2 R;
+uniform float T;
+out vec4 fragColor;
+#define PI 3.14159265
+#define TAU 6.2831853
+
+float hash(vec3 p) {
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+// value noise, periodic in y with period PY (so upward scrolling loops)
+const float PY = 8.0;
+float vnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float y0 = mod(i.y, PY), y1 = mod(i.y + 1.0, PY);
+  float a = hash(vec3(i.x, y0, i.z)), b = hash(vec3(i.x + 1.0, y0, i.z));
+  float c = hash(vec3(i.x, y1, i.z)), d = hash(vec3(i.x + 1.0, y1, i.z));
+  float e = hash(vec3(i.x, y0, i.z + 1.0)), g = hash(vec3(i.x + 1.0, y0, i.z + 1.0));
+  float h = hash(vec3(i.x, y1, i.z + 1.0)), k = hash(vec3(i.x + 1.0, y1, i.z + 1.0));
+  return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);
+}
+// fbm that scrolls up by whole periods over the loop; octaves rotate only in xz (keeps y periodic)
+float fbm(vec3 p, float speed) {
+  float s = 0.0, a = 0.5;
+  mat2 r = mat2(0.8, 0.6, -0.6, 0.8);
+  for (int k = 0; k < 4; k++) {
+    float m = float(k + 1) * speed;
+    s += a * vnoise(p - vec3(0.0, T * PY * m, 0.0));
+    p.xz = r * p.xz * 2.0;
+    p.y *= 2.0;
+    a *= 0.5;
+  }
+  return s;
+}
+
+// ---- the V (logo polygon, extruded, rounded) ----
+const float S = 1.42;
+vec2 V(float x, float y) { return vec2((x - 50.0) / 100.0 * S, (51.0 - y) / 100.0 * S * 1.1); }
+float sdPoly(vec2 p) {
+  vec2 v[7];
+  v[0] = V(8., 10.); v[1] = V(30., 10.); v[2] = V(50., 68.); v[3] = V(70., 10.);
+  v[4] = V(92., 10.); v[5] = V(62., 92.); v[6] = V(38., 92.);
+  float d = dot(p - v[0], p - v[0]);
+  float s = 1.0;
+  for (int i = 0, j = 6; i < 7; j = i, i++) {
+    vec2 e = v[j] - v[i], w = p - v[i];
+    vec2 b = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+    d = min(d, dot(b, b));
+    bvec3 c = bvec3(p.y >= v[i].y, p.y < v[j].y, e.x * w.y > e.y * w.x);
+    if (all(c) || all(not(c))) s *= -1.0;
+  }
+  return s * sqrt(d);
+}
+const vec3 VC = vec3(0.0, 1.06, -0.2);
+mat2 rot2(float a) { return mat2(cos(a), -sin(a), sin(a), cos(a)); }
+vec3 toV(vec3 p) {
+  p -= VC;
+  p.y -= 0.035 * sin(TAU * 2.0 * T);
+  p.xz = rot2(0.42 * sin(TAU * T)) * p.xz;
+  p.yz = rot2(-0.05) * p.yz;
+  return p;
+}
+float sdV(vec3 p) {
+  p = toV(p);
+  float d2 = sdPoly(p.xy);
+  vec2 w = vec2(d2 + 0.012, abs(p.z) - 0.1);
+  return min(max(w.x, w.y), 0.0) + length(max(w, 0.0)) - 0.012;
+}
+vec3 nV(vec3 p) {
+  vec2 e = vec2(0.0012, 0.0);
+  return normalize(vec3(sdV(p + e.xyy) - sdV(p - e.xyy), sdV(p + e.yxy) - sdV(p - e.yxy), sdV(p + e.yyx) - sdV(p - e.yyx)));
+}
+
+// ---- fire density ----
+float flick() {
+  return 1.0 + 0.07 * sin(TAU * T * 7.0) + 0.05 * sin(TAU * T * 13.0 + 1.0) + 0.04 * sin(TAU * T * 23.0 + 2.0);
+}
+float fireDen(vec3 p, out float temp) {
+  temp = 0.0;
+  float h = p.y;
+  if (h < 0.0 || h > 3.2) return 0.0;
+  float foot = 1.0 - smoothstep(0.5, 1.0, length(vec2(p.x / 3.5, (p.z - 0.25) / 1.0)));
+  if (foot <= 0.0) return 0.0;
+  float Hh = 1.3 + 1.7 * vnoise(vec3(p.x * 1.1 + 7.0, 0.5, 2.0));
+  Hh *= 1.0 - 0.5 * smoothstep(1.0, 3.4, abs(p.x));
+  float rel = h / Hh;
+  // large slow warp that grows with height: tongues lick and sway
+  vec3 q = p * vec3(2.7, 1.05, 2.7);
+  float w1 = fbm(q * 0.45 + vec3(3.0, 0.0, 9.0), 1.0);
+  float w2 = fbm(q * 0.45 + vec3(11.0, 0.0, 1.0), 1.0);
+  q.xz += (vec2(w1, w2) - 0.5) * (0.6 + 2.6 * rel);
+  float n = fbm(q, 2.0);
+  // ridges carve the volume into separate flames
+  float ridge = 1.0 - abs(vnoise(vec3(q.x * 1.3, q.y * 0.35 - T * PY * 2.0, q.z * 1.3)) * 2.0 - 1.0);
+  n = n * 0.62 + ridge * 0.48;
+  float d = n - rel * 0.95 - 0.16 + 0.08 * (1.0 - smoothstep(0.0, 0.2, rel));
+  d = smoothstep(0.0, 0.16, d) * foot;
+  temp = clamp(d * pow(max(1.0 - rel, 0.0), 0.6) * (0.75 + 0.6 * n), 0.0, 1.0);
+  return d;
+}
+vec3 blackbody(float t) {
+  // film-like fire response: red saturates first, then green, blue only in the very core
+  return pow(vec3(t), vec3(1.0, 2.3, 5.5)) * vec3(3.2, 2.6, 2.2);
+}
+
+vec2 boxHit(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax) {
+  vec3 t0 = (bmin - ro) / rd, t1 = (bmax - ro) / rd;
+  vec3 tn = min(t0, t1), tf = max(t0, t1);
+  return vec2(max(max(tn.x, tn.y), tn.z), min(min(tf.x, tf.y), tf.z));
+}
+
+const vec3 LP = vec3(0.0, 0.55, 0.25);
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * R) / R.y;
+  vec3 ro = vec3(0.0, 0.95, -6.9);
+  vec3 ta = vec3(0.0, 0.98, 0.0);
+  vec3 fw = normalize(ta - ro), rt = normalize(cross(vec3(0, 1, 0), fw)), up = cross(fw, rt);
+  float fov = 0.2;
+  // heat haze: rays above the flames wobble
+  float haze = smoothstep(-0.25, 0.1, uv.y) * smoothstep(0.75, 0.1, abs(uv.x));
+  vec2 hz = vec2(vnoise(vec3(uv * 18.0, 1.0) - vec3(0.0, T * PY * 3.0, 0.0)), vnoise(vec3(uv * 18.0 + 5.0, 2.0) - vec3(0.0, T * PY * 3.0, 0.0))) - 0.5;
+  uv += hz * 0.0035 * haze;
+  vec3 rd = normalize(fw + (uv.x * rt + uv.y * up) * fov * 2.0);
+  float fl = flick();
+  vec3 lightCol = vec3(1.0, 0.42, 0.1) * 5.2 * fl;
+
+  // --- surfaces: V and floor
+  float tS = 1e9;
+  vec3 col = vec3(0.0);
+  vec2 vb = boxHit(ro, rd, VC - vec3(0.95, 0.95, 0.95), VC + vec3(0.95, 0.95, 0.95));
+  bool hitV = false;
+  if (vb.x < vb.y && vb.y > 0.0) {
+    float t = max(vb.x, 0.0);
+    for (int i = 0; i < 96; i++) {
+      float d = sdV(ro + rd * t);
+      if (d < 0.0008) { hitV = true; break; }
+      t += d;
+      if (t > vb.y) break;
+    }
+    if (hitV) {
+      tS = t;
+      vec3 p = ro + rd * t, n = nV(p);
+      vec3 l = LP - p;
+      float dl = length(l);
+      l /= dl;
+      vec3 h = normalize(l - rd);
+      float att = 1.0 / (0.6 + dl * dl);
+      vec3 pv = toV(p);
+      // brushed dark metal
+      float brush = vnoise(vec3(pv.x * 2.0, pv.y * 140.0, 3.0)) * 0.5 + 0.5;
+      vec3 base = vec3(0.045, 0.04, 0.036) * (0.8 + 0.4 * brush);
+      float spec = pow(max(dot(n, h), 0.0), 38.0) * 2.5;
+      float fres = pow(1.0 - max(dot(n, -rd), 0.0), 4.0);
+      vec3 r = reflect(rd, n);
+      vec3 env = vec3(1.0, 0.36, 0.08) * smoothstep(-0.2, 0.6, -r.y + 0.3) * 0.5 + vec3(1.0, 0.5, 0.15) * pow(max(dot(r, normalize(LP - p)), 0.0), 6.0) * 1.2;
+      col = base * lightCol * att * max(dot(n, l), 0.0) * 0.9 + lightCol * att * spec * vec3(1.0, 0.8, 0.6) + env * (0.18 + 0.8 * fres);
+      // molten edges on the front face
+      float face = smoothstep(0.08, 0.098, abs(pv.z));
+      float ed = abs(sdPoly(pv.xy) + 0.012);
+      float glow = exp(-ed * 90.0) * face;
+      float run = 0.6 + 0.4 * sin(TAU * (pv.x * 1.3 + pv.y * 0.7 - T * 3.0));
+      col += vec3(1.0, 0.55, 0.15) * glow * 3.2 * run;
+    }
+  }
+  // floor
+  if (rd.y < 0.0) {
+    float t = -ro.y / rd.y;
+    if (t < tS) {
+      tS = t;
+      vec3 p = ro + rd * t;
+      vec3 l = LP - p;
+      float dl = length(l);
+      l /= dl;
+      float rough = vnoise(vec3(p.xz * 6.0, 1.0).xzy) * 0.6 + vnoise(vec3(p.xz * 23.0, 4.0).xzy) * 0.4;
+      vec3 n = normalize(vec3((rough - 0.5) * 0.08, 1.0, (vnoise(vec3(p.xz * 9.0, 7.0).xzy) - 0.5) * 0.08));
+      float att = 1.0 / (0.4 + dl * dl);
+      vec3 r = reflect(rd, n);
+      float sp = pow(max(dot(r, l), 0.0), 18.0);
+      col = vec3(0.02, 0.016, 0.014) * (0.5 + rough) * lightCol * att * max(dot(n, l), 0.0) * 1.6 + lightCol * att * sp * 0.7 * vec3(1.0, 0.7, 0.45);
+      // glowing grid in the floor, fading with distance from the fire
+      vec2 g = abs(fract(p.xz * 1.6) - 0.5);
+      float line = smoothstep(0.035, 0.0, min(g.x, g.y) - 0.0) * 0.5;
+      col += vec3(1.0, 0.33, 0.07) * line * att * 0.9 * fl;
+      col *= exp(-max(t - 6.5, 0.0) * 0.12);
+    }
+  }
+
+  // --- volumetric fire, composited in front of whatever was hit
+  vec2 fb = boxHit(ro, rd, vec3(-4.2, 0.0, -1.1), vec3(4.2, 3.2, 1.7));
+  if (fb.x < fb.y && fb.y > 0.0) {
+    float t0 = max(fb.x, 0.0), t1 = min(fb.y, tS);
+    const int STEPS = 96;
+    float dt = (t1 - t0) / float(STEPS);
+    float jit = hash(vec3(gl_FragCoord.xy, T * 97.0));
+    float trans = 1.0;
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < STEPS; i++) {
+      if (t1 <= t0) break;
+      float t = t0 + (float(i) + jit) * dt;
+      float temp;
+      float d = fireDen(ro + rd * t, temp);
+      if (d > 0.001) {
+        acc += trans * blackbody(temp) * d * dt * 1.6;
+        trans *= exp(-d * dt * 4.0);
+        if (trans < 0.01) break;
+      }
+    }
+    col = col * trans + acc;
+  }
+
+  // --- sparks: motion-blurred streaks rising out of the fire (screen space, loop-safe)
+  vec2 sp = gl_FragCoord.xy / R.y;
+  float aspect = R.x / R.y;
+  for (int i = 0; i < 46; i++) {
+    float fi = float(i);
+    float s1 = hash(vec3(fi, 1.0, 7.0)), s2 = hash(vec3(fi, 2.0, 3.0)), s3 = hash(vec3(fi, 5.0, 1.0));
+    float k = 1.0 + floor(s3 * 3.0);
+    float life = fract(s1 + T * k);
+    float x0 = aspect * 0.5 + (s2 - 0.5) * aspect * 0.62;
+    vec2 pos = vec2(x0 + 0.05 * sin(TAU * (life * 1.0 + s1)) + (s2 - 0.5) * life * 0.25, 0.22 + life * 0.85);
+    vec2 vel = vec2(0.05 * TAU * cos(TAU * (life + s1)) + (s2 - 0.5) * 0.25, 0.85) * k * 0.007;
+    vec2 a = pos, b = pos - vel;
+    vec2 pa = sp - a, ba = b - a;
+    float hh = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    float dd = length(pa - ba * hh);
+    float fade = smoothstep(0.0, 0.08, life) * (1.0 - smoothstep(0.45, 1.0, life));
+    float sz = 0.0018 + 0.0014 * s3;
+    col += vec3(1.0, 0.55, 0.18) * smoothstep(sz, 0.0, dd) * fade * 1.8 * (1.0 - hh * 0.7);
+  }
+
+  // grade
+  col = aces(col * 0.9);
+  vec2 q = gl_FragCoord.xy / R;
+  col *= 0.35 + 0.65 * pow(16.0 * q.x * q.y * (1.0 - q.x) * (1.0 - q.y), 0.22);
+  col = pow(col, vec3(1.0 / 2.2));
+  fragColor = vec4(col, 1.0);
+}
+</script>
+<script>
+const params = new URLSearchParams(location.search);
+const W = +(params.get('w') || 1280), H = +(params.get('h') || 360), SS = +(params.get('ss') || 2), N = +(params.get('n') || 120);
+const only = params.get('only');
+const cv = document.createElement('canvas');
+cv.width = W * SS; cv.height = H * SS;
+const gl = cv.getContext('webgl2', { preserveDrawingBuffer: true, antialias: false });
+const vs = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+function sh(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const out = [];
+try {
+  const pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, document.getElementById('fs').textContent));
+  gl.linkProgram(pr);
+  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+  gl.useProgram(pr);
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(pr, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.uniform2f(gl.getUniformLocation(pr, 'R'), cv.width, cv.height);
+  const uT = gl.getUniformLocation(pr, 'T');
+  const c2 = document.createElement('canvas');
+  c2.width = W; c2.height = H;
+  const x = c2.getContext('2d');
+  x.imageSmoothingQuality = 'high';
+  const frames = only !== null ? [+only] : [...Array(N).keys()];
+  for (const i of frames) {
+    gl.uniform1f(uT, i / N);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.finish();
+    x.drawImage(cv, 0, 0, W, H);
+    out.push(c2.toDataURL('image/png'));
+  }
+} catch (e) {
+  out.push('ERROR ' + e.message);
+}
+document.getElementById('o').textContent = JSON.stringify(out);
+</script>
+</body>
