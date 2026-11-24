@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Build assets/contrib.svg.
 
-Two horned entities drawn in 0/1 characters hurl contribution squares at each
-other over a contribution grid. Every hit shakes the scene and glitches the
-contribution count, which is itself built from 0/1 characters.
+Two horned entities drawn in 0/1 characters hurl spinning contribution cubes at
+each other across a 3D city of contribution bars, seen in perspective. Every hit
+sends a shockwave across the floor and glitches the count, an extruded 3D number
+built from 0/1 cells.
+
+Built to stay light to animate (phones): the city is a few dozen merged paths,
+and the two entities are pictures baked once by scripts/bake.mjs into
+assets/src/figures.json (`python3 scripts/contrib.py --figures-src`, then
+`npm run bake`). Without that file they fall back to 0/1 text.
 
 The grid is made up (it spells VANNI). The numbers are real, from the GitHub
 GraphQL API.
@@ -282,73 +288,226 @@ def arm(facing, rng, fill):
 
 # ------------------------------------------------------------------ build
 
+
+FIGS_JSON = os.path.join(ROOT, "assets", "src", "figures.json")
+FIGS_SRC = os.path.join(ROOT, "assets", "src", "figures.src.svg")
+
+GCOLS, GROWS = 53, 7
+LEVEL_H = [0.06, 0.45, 0.85, 1.35, 2.4, 3.5]  # bar heights per level, world units
+ROW_P, BAR_D = 2.1, 1.7  # the rows' spacing and the bars' depth: long blocks along wide streets
+LEVEL_TOP = ["#191919", "#5a160c", "#a02a18", "#e0401f", ORA, YEL]
+
+
+def shade(hex_, k):
+    """darker (k < 1) or toward cream (k > 1)"""
+    r, g, b = (int(hex_[i:i + 2], 16) for i in (1, 3, 5))
+    if k <= 1:
+        r, g, b = r * k, g * k, b * k
+    else:
+        t = k - 1
+        r, g, b = r + (255 - r) * t, g + (241 - g) * t, b + (194 - b) * t
+    return "#%02x%02x%02x" % (int(r), int(g), int(b))
+
+
+class Cam:
+    """A pinhole camera above the front of the city, tilted down at it."""
+
+    def __init__(self, cx, cy, f, pos, pitch_deg):
+        self.cx, self.cy, self.f, self.pos = cx, cy, f, pos
+        a = math.radians(pitch_deg)
+        self.ca, self.sa = math.cos(a), math.sin(a)
+
+    def p(self, x, y, z):
+        vx, vy, vz = x - self.pos[0], y - self.pos[1], z - self.pos[2]
+        yc = vy * self.ca + vz * self.sa
+        zc = -vy * self.sa + vz * self.ca
+        return self.cx + self.f * vx / zc, self.cy - self.f * yc / zc
+
+
+def poly(pts):
+    return "M" + "L".join(f"{x:.1f} {y:.1f}" for x, y in pts) + "Z"
+
+
+def make_grid(rng):
+    """Made-up activity that spells VANNI, levels 0..5 (same recipe as before)."""
+    cells = [[0] * GCOLS for _ in range(GROWS)]
+    font = {"V": ["101", "101", "101", "101", "010"], "A": ["010", "101", "111", "101", "101"],
+            "N": ["101", "111", "111", "111", "101"], "I": ["111", "010", "010", "010", "111"]}
+    for x in range(GCOLS):
+        wave = 0.5 + 0.5 * math.sin(x / 4.3)
+        for y in range(GROWS):
+            r = rng.random()
+            cells[y][x] = 0 if r < 0.42 - wave * 0.18 else 1 if r < 0.74 else 2 if r < 0.92 else 3
+    word = "VANNI"
+    start = (GCOLS - (len(word) * 4 - 1)) // 2
+    for i, chx in enumerate(word):
+        for y, line in enumerate(font[chx]):
+            for dx, bit in enumerate(line):
+                if bit == "1":
+                    cells[y + 1][start + i * 4 + dx] = 5 if rng.random() < 0.55 else 4
+    return cells
+
+
+def city(cam, cells, rows_css):
+    """The grid as bars in perspective. Painted back row first; within a row the side faces,
+    then the tops, then the fronts, each merged into one path per colour, so the whole city
+    is a few dozen paths however many bars it has."""
+    out = []
+    size = 0.8
+    for r in range(GROWS - 1, -1, -1):  # far to near
+        z0 = r * ROW_P
+        z1 = z0 + BAR_D
+        faces = {}  # (kind, level) -> [paths]
+        for c in range(GCOLS):
+            lv = cells[GROWS - 1 - r][c]
+            h = LEVEL_H[lv]
+            x0 = (c - GCOLS / 2) * 1.0
+            x1 = x0 + size
+            # the side you can see: the one facing the camera's middle
+            if x1 < cam.pos[0]:
+                side = [cam.p(x1, 0, z0), cam.p(x1, 0, z1), cam.p(x1, h, z1), cam.p(x1, h, z0)]
+            elif x0 > cam.pos[0]:
+                side = [cam.p(x0, 0, z0), cam.p(x0, 0, z1), cam.p(x0, h, z1), cam.p(x0, h, z0)]
+            else:
+                side = None
+            top = [cam.p(x0, h, z0), cam.p(x1, h, z0), cam.p(x1, h, z1), cam.p(x0, h, z1)]
+            front = [cam.p(x0, 0, z0), cam.p(x1, 0, z0), cam.p(x1, h, z0), cam.p(x0, h, z0)]
+            if side and lv:
+                faces.setdefault(("s", lv), []).append(poly(side))
+            faces.setdefault(("t", lv), []).append(poly(top))
+            if lv:
+                faces.setdefault(("f", lv), []).append(poly(front))
+        g = []
+        for kind in ("s", "t", "f"):
+            for lv in range(6):
+                d = faces.get((kind, lv))
+                if not d:
+                    continue
+                top = LEVEL_TOP[lv]
+                fill = f"url(#wv{lv})" if kind == "t" else shade(top, 0.62 if kind == "f" else 0.4)
+                g.append(f'<path d="{"".join(d)}" fill="{fill}"/>')
+        # each row rises out of the floor, front rows first
+        out.append(f'<g class="rw" style="animation-delay:{0.25 + (GROWS - 1 - r) * 0.0 + r * 0.09:.2f}s">{"".join(g)}</g>')
+    return "".join(out)
+
+
+def cube(s, cols):
+    """a small cube seen from above-front: top, left and right faces"""
+    a, b = s * 0.5, s * 0.29
+    top = poly([(0, -b * 2), (a, -b), (0, 0), (-a, -b)])
+    left = poly([(-a, -b), (0, 0), (0, s * 0.62), (-a, s * 0.62 - b)])
+    right = poly([(a, -b), (0, 0), (0, s * 0.62), (a, s * 0.62 - b)])
+    return (f'<path d="{top}" fill="{cols[0]}"/><path d="{left}" fill="{cols[1]}"/>'
+            f'<path d="{right}" fill="{cols[2]}"/>')
+
+
+def figure_parts(rng):
+    """The two entities, as vector 0/1 text (what gets baked), plus where their eyes, hands
+    and chests are."""
+    pal_l = ["#1f0905", "#5a160c", "#a02a18", ORA, YEL]
+    pal_r = ["#1a0604", "#4a0f08", "#8a1c10", RED, ORA]
+    parts = {}
+    for side, facing, pal in (("L", 1, pal_l), ("R", -1, pal_r)):
+        fbody, fflash, eyes, shoulder, chest = figure(facing, rng, pal)
+        arm_svg, hand = arm(facing, rng, pal[3])
+        parts[side] = dict(body=fbody, flash=fflash, arm=arm_svg, eyes=eyes, shoulder=shoulder, chest=chest, hand=hand)
+    return parts
+
+
+def write_figures_src(parts):
+    """A sheet with every figure piece in its own group, for scripts/bake.mjs to render.
+    Each piece sits at (300, 300) in its own coordinates."""
+    css = (f"text{{font-family:{FONT}}}"
+           ".fig text,.arm text{font-size:6px;font-weight:700;white-space:pre}")
+    pieces = []
+    for side, p in parts.items():
+        pieces += [(f"body{side}", "fig", p["body"]), (f"flash{side}", "fig", p["flash"]), (f"arm{side}", "arm", p["arm"])]
+    groups = "".join(f'<g id="{i}" class="{c}" transform="translate(300 300)" xml:space="preserve">{s}</g>' for i, c, s in pieces)
+    os.makedirs(os.path.dirname(FIGS_SRC), exist_ok=True)
+    with open(FIGS_SRC, "w") as f:
+        f.write(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 700" width="600" height="700"><style>{css}</style>{groups}</svg>\n')
+
+
+def piece(baked, key, vector, cls):
+    """a baked picture of a figure piece when there is one, else the vector text"""
+    b = baked.get(key)
+    if b:
+        return f'<image x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" href="{b["href"]}"/>'
+    return f'<g class="{cls}">{vector}</g>'
+
+
 def build(d):
     rng = random.Random(1337)
+    parts = figure_parts(random.Random(1337))
+    try:
+        with open(FIGS_JSON) as f:
+            baked = json.load(f)
+    except OSError:
+        baked = {}
+
     css = [
         f"text{{font-family:{FONT}}}",
         ".fig text,.arm text{font-size:6px;font-weight:700;white-space:pre}",
-        ".num text{font-size:8px;font-weight:800;white-space:pre}",
         ".ash text{font-size:9px;font-weight:700}",
     ]
     defs, body = [], []
-
     lx, rx, fy = 34, W - 34 - FW, H - 18 - FH
-    num_y = 74
-    grid_x, grid_y, cs, gap = 269, 352, 11, 3
+    num_y = 70
 
     flight = 1.0
     throws = {"L": 0.45, "R": 2.25}
     hits = {"R": throws["L"] + flight, "L": throws["R"] + flight}
 
-    # ---------- shake the whole scene on every hit
-    sk = []
-    for t in hits.values():
-        p = (t % T) / T * 100
-        sk.append(f"{p:.2f}%{{transform:translate(0,0)}}{p + .4:.2f}%{{transform:translate(7px,-4px)}}"
-                  f"{p + 1.1:.2f}%{{transform:translate(-6px,3px)}}{p + 1.9:.2f}%{{transform:translate(4px,2px)}}"
-                  f"{p + 2.8:.2f}%{{transform:translate(-2px,-1px)}}{p + 3.8:.2f}%{{transform:translate(0,0)}}")
-    css.append("@keyframes shk{0%,100%{transform:translate(0,0)}" + "".join(sk) + "}"
-               f".shk{{animation:shk {T}s linear infinite}}")
-
     # ---------- backdrop
-    defs.append(f'<radialGradient id="rg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{ORA}" stop-opacity=".30"/><stop offset="1" stop-color="{ORA}" stop-opacity="0"/></radialGradient>')
-    defs.append(f'<radialGradient id="rr" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{RED}" stop-opacity=".35"/><stop offset="1" stop-color="{RED}" stop-opacity="0"/></radialGradient>')
+    defs.append(f'<radialGradient id="rg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{ORA}" stop-opacity=".26"/><stop offset="1" stop-color="{ORA}" stop-opacity="0"/></radialGradient>')
+    defs.append(f'<radialGradient id="rr" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{RED}" stop-opacity=".32"/><stop offset="1" stop-color="{RED}" stop-opacity="0"/></radialGradient>')
     defs.append(f'<radialGradient id="ey" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{YEL}" stop-opacity=".9"/><stop offset="1" stop-color="{YEL}" stop-opacity="0"/></radialGradient>')
     defs.append(f'<linearGradient id="fl" x1="0" x2="1"><stop offset="0" stop-color="{ORA}" stop-opacity="0"/><stop offset=".5" stop-color="{ORA}" stop-opacity=".55"/><stop offset="1" stop-color="{ORA}" stop-opacity="0"/></linearGradient>')
     defs.append('<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000"/></linearGradient>')
-    defs.append('<pattern id="scan" width="4" height="3" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="#000" opacity=".55"/></pattern>')
-    css.append(".glow{animation:gl 2.4s ease-in-out infinite alternate}@keyframes gl{from{opacity:.35}to{opacity:.8}}")
-    body.append(f'<ellipse class="glow" cx="{W / 2}" cy="{num_y + 70}" rx="380" ry="130" fill="url(#rg)"/>')
-    body.append(f'<ellipse class="glow" cx="{lx + FW / 2}" cy="{fy + 170}" rx="200" ry="230" fill="url(#rg)" style="animation-delay:-.8s"/>')
-    body.append(f'<ellipse class="glow" cx="{rx + FW / 2}" cy="{fy + 170}" rx="200" ry="230" fill="url(#rr)" style="animation-delay:-1.6s"/>')
-
+    defs.append('<pattern id="scan" width="4" height="3" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="#000" opacity=".5"/></pattern>')
+    body.append(f'<ellipse cx="{W / 2}" cy="{num_y + 70}" rx="380" ry="130" fill="url(#rg)"/>')
+    body.append(f'<ellipse cx="{lx + FW / 2}" cy="{fy + 170}" rx="200" ry="230" fill="url(#rg)"/>')
+    body.append(f'<ellipse cx="{rx + FW / 2}" cy="{fy + 170}" rx="200" ry="230" fill="url(#rr)"/>')
     body.append(f'<path d="M18.5 {H - 80}V18.5H{W - 18.5}V{H - 80}" fill="none" stroke="#1F1F1F"/>')
     body.append(f'<g fill="none" stroke="{ORA}" stroke-width="2"><path d="M18 46V18h28"/><path d="M{W - 46} 18h28v28"/></g>')
     body.append(f'<g font-size="12" fill="#9C9C9C" letter-spacing="1.5">'
                 f'<text x="40" y="46"><tspan fill="{ORA}">●</tspan> git log --author=vanni --since=1.year | wc -l</text>'
                 f'<text x="{W - 40}" y="46" text-anchor="end">sync {d["updated"]} <tspan fill="{ORA}">/ live</tspan></text></g>')
 
-    # ---------- the number: 0/1 seven-segment digits over a dim "8" ghost
+    # ---------- the number, extruded: 0/1 cells as one path, stacked back in depth
     year = f"{d['year']:,}"
     cells, ncols = number_cells(year, rng)
     ghost, _ = number_cells(year.translate(str.maketrans("0123456789", "8888888888")), rng, ghost=True)
     ghost = {k: v for k, v in ghost.items() if k not in cells}
-    ncw, nch, nscale = 8.0, 8.0, 1.0
-    nh = DH * nch
-    nx = W / 2 - ncols * ncw * nscale / 2
+    ncw = 8.0
+    nh = DH * ncw
+    nx = W / 2 - ncols * ncw / 2 - 8
+    cell_d = "".join(f"M{c * ncw:.0f} {r * ncw:.0f}h{ncw - 1:.0f}v{ncw - 1:.0f}h-{ncw - 1:.0f}z" for c, r in sorted(cells))
+    ghost_d = "".join(f"M{c * ncw:.0f} {r * ncw:.0f}h{ncw - 1:.0f}v{ncw - 1:.0f}h-{ncw - 1:.0f}z" for c, r in sorted(ghost))
+    defs.append(f'<path id="num" d="{cell_d}"/>')
     defs.append(f'<linearGradient id="ng" x1="0" x2="{ncols * ncw}" gradientUnits="userSpaceOnUse">'
                 f'<stop offset="0" stop-color="{YEL}"/><stop offset=".55" stop-color="{ORA}"/><stop offset="1" stop-color="{RED}"/></linearGradient>')
-    defs.append(f'<g id="num">{cells_to_rects(cells, ncw)}</g>')
-    digits = [c for c in year if c != ","]
-    scr = "".join(rng.choice("0123456789") if c != "," else "," for c in year)
-    scells, _ = number_cells(scr, rng)
-    defs.append(f'<g id="nscr">{cells_to_rects(scells, ncw)}</g>')
-
-    glitch_times = list(hits.values()) + [1.05, 3.05]
+    # a sheen gliding across the face
+    defs.append(f'<linearGradient id="sheen" x1="-160" x2="0" gradientUnits="userSpaceOnUse">'
+                f'<stop offset="0" stop-color="{CREAM}" stop-opacity="0"/><stop offset=".5" stop-color="{CREAM}" stop-opacity=".75"/>'
+                f'<stop offset="1" stop-color="{CREAM}" stop-opacity="0"/>'
+                f'<animateTransform attributeName="gradientTransform" type="translate" values="-60 0;{ncols * ncw + 220} 0;{ncols * ncw + 220} 0" keyTimes="0;.55;1" dur="4.2s" repeatCount="indefinite"/>'
+                f'</linearGradient>')
+    DEPTH = 6  # layers of depth, each a step further back (fewer, thicker steps: lighter to draw)
+    num = [f'<g transform="translate({nx:.1f} {num_y})">',
+           f'<path d="{ghost_d}" fill="#120705"/>']
+    for i in range(DEPTH, 0, -1):  # the back layers first
+        k = i / DEPTH
+        col = shade("#a02a18", 0.18 + 0.5 * (1 - k))
+        num.append(f'<use href="#num" x="{i * 1.4:.2f}" y="{-i * 1.85:.2f}" fill="{col}"/>')
+    num.append(f'<use href="#num" fill="url(#ng)"/>')
+    num.append(f'<use href="#num" fill="url(#sheen)"/>')
+    # on every hit the face jumps apart into red and cream for a moment
+    gl_times = sorted(list(hits.values()) + [1.05, 3.05])
 
     def glitch_kf(name, frames, base):
         s = f"@keyframes {name}{{0%,100%{{{base}}}"
-        for t in sorted(glitch_times):
+        for t in gl_times:
             p = (t % T) / T * 100
             for i, fr in enumerate(frames):
                 s += f"{p + i * .7:.2f}%{{{fr}}}"
@@ -358,34 +517,15 @@ def build(d):
     hidden = "transform:translate(0,0);opacity:0"
     css.append(glitch_kf("rgbA", ["transform:translate(-6px,1px);opacity:.9", "transform:translate(4px,-1px);opacity:.7", "transform:translate(-2px,0);opacity:.5"], hidden))
     css.append(glitch_kf("rgbB", ["transform:translate(6px,-1px);opacity:.9", "transform:translate(-5px,1px);opacity:.7", "transform:translate(3px,0);opacity:.4"], hidden))
-    css.append(glitch_kf("scr", ["opacity:1", "opacity:0", "opacity:.8"], "opacity:0"))
-    css.append(glitch_kf("nmh", ["opacity:0", "opacity:1", "opacity:.3"], "opacity:1"))
-    css.append(f".rgbA{{animation:rgbA {T}s steps(1) infinite}}.rgbB{{animation:rgbB {T}s steps(1) infinite}}"
-               f".scr{{animation:scr {T}s steps(1) infinite}}.nwrap{{animation:nmh {T}s steps(1) infinite}}")
-    num = [f'<g class="num" transform="translate({nx:.1f} {num_y}) scale({nscale})">',
-           f'<g fill="#140805">{cells_to_rects(ghost, ncw)}</g>',
-           f'<use class="rgb rgbA" href="#num" fill="{RED}" opacity="0"/>',
-           f'<use class="rgb rgbB" href="#num" fill="{CREAM}" opacity="0"/>',
-           '<g class="nwrap">']
-    slices = [0, 3, 5, 9, 11, 14, DH + 1]
-    for i in range(len(slices) - 1):
-        y0, y1 = slices[i] * nch, slices[i + 1] * nch
-        defs.append(f'<clipPath id="ns{i}"><rect x="-40" y="{y0 - 1}" width="{ncols * ncw + 80}" height="{y1 - y0 + 1}"/></clipPath>')
-        frames = [f"transform:translateX({rng.choice([-1, 1]) * rng.randint(4, 22)}px)" for _ in range(3)]
-        css.append(glitch_kf(f"sl{i}", frames, "transform:translateX(0)"))
-        css.append(f".sl{i}{{animation:sl{i} {T}s steps(1) infinite}}")
-        num.append(f'<g clip-path="url(#ns{i})"><use class="sl{i}" href="#num" fill="url(#ng)"/></g>')
-    num.append("</g>")
-    num.append(f'<use class="scr" href="#nscr" fill="{CREAM}" opacity="0"/>')
-    defs.append(f'<linearGradient id="sw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{CREAM}" stop-opacity="0"/><stop offset="1" stop-color="{CREAM}" stop-opacity=".22"/></linearGradient>')
-    css.append(f".sweep{{animation:sw 2.8s cubic-bezier(.16,1,.3,1) infinite}}@keyframes sw{{from{{transform:translateY(-30px);opacity:0}}10%{{opacity:1}}to{{transform:translateY({nh + 10}px);opacity:0}}}}")
-    num.append(f'<rect x="-10" y="-2" width="{ncols * ncw + 20}" height="{nh + 4}" fill="url(#scan)"/>')
-    num.append(f'<rect class="sweep" x="-10" y="0" width="{ncols * ncw + 20}" height="24" fill="url(#sw)"/>')
+    css.append(f".rgbA{{animation:rgbA {T}s steps(1) infinite}}.rgbB{{animation:rgbB {T}s steps(1) infinite}}")
+    num.append(f'<use class="rgb rgbA" href="#num" fill="{RED}" opacity="0"/>')
+    num.append(f'<use class="rgb rgbB" href="#num" fill="{CREAM}" opacity="0"/>')
+    num.append(f'<rect x="-10" y="-14" width="{ncols * ncw + 30}" height="{nh + 18}" fill="url(#scan)"/>')
     num.append("</g>")
     body.append("".join(num))
 
     # ---------- label + stat boxes
-    label_y = num_y + nh * nscale + 34
+    label_y = num_y + nh + 34
     css.append(".car{animation:c 1s steps(1) infinite}@keyframes c{50%{opacity:0}}")
     body.append(f'<text x="{W / 2}" y="{label_y}" text-anchor="middle" font-size="13" fill="#F5F3F1" letter-spacing="4">'
                 f'CONTRIBUTIONS / LAST 365 DAYS<tspan class="car" fill="{ORA}">_</tspan></text>')
@@ -400,48 +540,34 @@ def build(d):
                     f'<text x="{x + 12}" y="{by + 18}" font-size="10" fill="#6a6a6a" letter-spacing="1.5">{k.upper()}</text>'
                     f'<text x="{x + 12}" y="{by + 37}" font-size="16" font-weight="800" fill="{YEL if i == 0 else CREAM}">{v}</text>')
 
-    # ---------- grid (made up, spells VANNI)
-    gcols, grows = 53, 7
-    gcells = [[0] * gcols for _ in range(grows)]
-    font = {"V": ["101", "101", "101", "101", "010"], "A": ["010", "101", "111", "101", "101"],
-            "N": ["101", "111", "111", "111", "101"], "I": ["111", "010", "010", "010", "111"]}
-    for x in range(gcols):
-        wave = 0.5 + 0.5 * math.sin(x / 4.3)
-        for y in range(grows):
-            r = rng.random()
-            gcells[y][x] = 0 if r < 0.42 - wave * 0.18 else 1 if r < 0.74 else 2 if r < 0.92 else 3
-    word = "VANNI"
-    start = (gcols - (len(word) * 4 - 1)) // 2
-    for i, chx in enumerate(word):
-        for y, line in enumerate(font[chx]):
-            for dx, bit in enumerate(line):
-                if bit == "1":
-                    gcells[y + 1][start + i * 4 + dx] = 5 if rng.random() < 0.55 else 4
-    gw = gcols * (cs + gap) - gap
-    months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-    now = dt.date.today()
-    g = ['<g font-size="10" fill="#4a4a4a" letter-spacing="1">']
-    for i in range(12):
-        g.append(f'<text x="{grid_x + i * gw / 12:.0f}" y="{grid_y - 8}">{months[(now.month + i) % 12]}</text>')
-    g.append("</g>")
-    css.append(".gp{animation:gp 2.6s steps(1) infinite}@keyframes gp{0%,100%{opacity:1}10%{opacity:.4}12%{opacity:1}58%{opacity:.6}60%{opacity:1}}")
-    for y, row in enumerate(gcells):
-        for x, v in enumerate(row):
-            cls = f' class="gp" style="animation-delay:-{rng.random() * 2.6:.2f}s"' if v >= 4 and rng.random() < 0.2 else ""
-            g.append(f'<rect x="{grid_x + x * (cs + gap)}" y="{grid_y + y * (cs + gap)}" width="{cs}" height="{cs}" fill="{GRID_LV[v]}"{cls}/>')
-    body.append("".join(g))
+    # ---------- the city
+    cam = Cam(W / 2, 426, 372, (0.0, 24.0, -12.0), 52)
+    cells_g = make_grid(rng)
+    # a light band sweeping across every top, left to right
+    x_left, _ = cam.p(-GCOLS / 2, 0, 0)
+    x_right, _ = cam.p(GCOLS / 2, 0, 0)
+    span = x_right - x_left
+    for lv, top in enumerate(LEVEL_TOP):
+        bright = shade(top, 1.55 if lv else 1.12)
+        defs.append(f'<linearGradient id="wv{lv}" gradientUnits="userSpaceOnUse" x1="{x_left - 260:.0f}" x2="{x_left - 20:.0f}" y1="0" y2="0">'
+                    f'<stop offset="0" stop-color="{top}"/><stop offset=".42" stop-color="{top}"/><stop offset=".5" stop-color="{bright}"/>'
+                    f'<stop offset=".58" stop-color="{top}"/><stop offset="1" stop-color="{top}"/>'
+                    f'<animateTransform attributeName="gradientTransform" type="translate" values="0 0;{span + 320:.0f} 0;{span + 320:.0f} 0" keyTimes="0;.7;1" dur="5s" repeatCount="indefinite"/>'
+                    f'</linearGradient>')
+    # a warm pool of light on the floor under it
+    fx0, fy0 = cam.p(0, 0, GROWS * ROW_P / 2)
+    defs.append(f'<radialGradient id="floor" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="{ORA}" stop-opacity=".22"/><stop offset="1" stop-color="{ORA}" stop-opacity="0"/></radialGradient>')
+    body.append(f'<ellipse cx="{fx0:.0f}" cy="{fy0:.0f}" rx="{span * 0.62:.0f}" ry="95" fill="url(#floor)"/>')
+    css.append(".rw{transform-box:fill-box;transform-origin:50% 100%;animation:rw 1.1s cubic-bezier(.16,1,.3,1) both}"
+               "@keyframes rw{from{transform:scaleY(.02);opacity:0}to{transform:scaleY(1);opacity:1}}")
+    body.append(city(cam, cells_g, css))
 
-    # ---------- the two entities
-    pal_l = ["#1f0905", "#5a160c", "#a02a18", ORA, YEL]
-    pal_r = ["#1a0604", "#4a0f08", "#8a1c10", RED, ORA]
+    # ---------- the two entities, standing at the ends
     css.append(".hov{animation:hv 2.2s ease-in-out infinite alternate}@keyframes hv{from{transform:translateY(0)}to{transform:translateY(-9px)}}")
     css.append(".eye{animation:ey 2.8s steps(1) infinite}@keyframes ey{0%,100%{opacity:1}44%{opacity:.55}46%{opacity:1}90%{opacity:0}92%{opacity:1}}")
-    css.append(".fl{animation:fl .6s steps(1) infinite}@keyframes fl{0%,100%{opacity:1}50%{opacity:.82}}")
-
     figs = {}
-    for side, x0, facing, pal, glowc in (("L", lx, 1, pal_l, YEL), ("R", rx, -1, pal_r, ORA)):
-        fbody, fflash, eyes, shoulder, chest = figure(facing, rng, pal)
-        arm_svg, hand = arm(facing, rng, pal[3])
+    for side, x0, facing, glowc in (("L", lx, 1, YEL), ("R", rx, -1, ORA)):
+        p = parts[side]
         tp, hp = (throws[side] % T) / T * 100, (hits[side] % T) / T * 100
         s = facing
         css.append(f"@keyframes a{side}{{0%,{tp - 13:.2f}%{{transform:rotate(0)}}{tp - 1:.2f}%{{transform:rotate({-75 * s}deg)}}"
@@ -457,38 +583,40 @@ def build(d):
         eye_svg = "".join(
             f'<ellipse cx="{ex}" cy="{ey}" rx="16" ry="8" fill="url(#ey)" opacity=".7"/>'
             f'<rect class="eye" x="{ex - 6}" y="{ey - 1.5}" width="12" height="3" fill="{CREAM}"/>'
-            for ex, ey in eyes)
-        orb = "".join(f'<rect x="{-4 + dx}" y="{-4 + dy}" width="8" height="8" fill="{c}"/>'
-                      for dx, dy, c in ((0, 0, CREAM), (-9, 0, glowc), (9, 0, glowc), (0, -9, glowc), (0, 9, glowc)))
-        orb = (f'<g transform="translate({hand[0]} {hand[1]})"><g class="o{side}">'
-               f'<ellipse rx="26" ry="26" fill="url(#ey)"/>{orb}</g></g>')
+            for ex, ey in p["eyes"])
+        orb = cube(16, (CREAM, glowc, shade(glowc, 0.6)))
+        orb = (f'<g transform="translate({p["hand"][0]} {p["hand"][1]})"><g class="o{side}">'
+               f'<ellipse rx="24" ry="24" fill="url(#ey)"/>{orb}</g></g>')
+        sh = p["shoulder"]
         body.append(
             f'<g transform="translate({x0} {fy})"><g class="k{side}"><g class="hov" style="animation-delay:-{1.1 if side == "R" else 0}s">'
-            f'<g class="fig fl">{fbody}</g>'
-            f'<g class="arm" transform="translate({shoulder[0]} {shoulder[1]})"><g class="a{side}">{arm_svg}{orb}</g></g>'
+            f'{piece(baked, "body" + side, p["body"], "fig")}'
+            f'<g transform="translate({sh[0]} {sh[1]})"><g class="a{side}">{piece(baked, "arm" + side, p["arm"], "arm")}{orb}</g></g>'
             f'{eye_svg}'
-            f'<g class="fig f{side}" opacity="0">{fflash}</g>'
+            f'<g class="f{side}" opacity="0">{piece(baked, "flash" + side, p["flash"], "fig")}</g>'
             f"</g></g></g>"
         )
-        figs[side] = dict(hand=(x0 + shoulder[0] + hand[0], fy + shoulder[1] + hand[1]),
-                          chest=(x0 + chest[0], fy + chest[1]))
+        figs[side] = dict(hand=(x0 + sh[0] + p["hand"][0], fy + sh[1] + p["hand"][1]),
+                          chest=(x0 + p["chest"][0], fy + p["chest"][1]))
 
     body.append(f'<rect x="60" y="{H - 18}" width="{W - 120}" height="1" fill="url(#fl)"/>')
 
-    # ---------- volleys: contribution squares with trails, lighting the grid as they pass
+    # ---------- volleys: three spinning 3D cubes per throw, arcing over the city
     proj = []
-    for side, other, cols in (("L", "R", [YEL, ORA, CREAM]), ("R", "L", [RED, ORA, YEL])):
+    css.append(".spin{animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}")
+    for side, other, cols in (("L", "R", [(CREAM, YEL, ORA), (YEL, ORA, "#a02a18"), (ORA, RED, "#7a1d10")]),
+                              ("R", "L", [(CREAM, ORA, RED), (ORA, RED, "#7a1d10"), (YEL, ORA, "#a02a18")])):
         sx, sy = figs[side]["hand"]
         ex, ey = figs[other]["chest"]
         t0 = throws[side]
-        for i in range(7):
-            lag = i * 0.045
+        for i in range(3):
+            lag = i * 0.07
             a = (t0 + lag) / T * 100
             b = (t0 + lag + flight) / T * 100
             m = (a + b) / 2
-            dx = ex - sx + rng.randint(-18, 18)
-            dy_end = ey - sy + rng.randint(-26, 26)
-            pk = rng.randint(150, 215)
+            dx = ex - sx + rng.randint(-14, 14)
+            dy_end = ey - sy + rng.randint(-20, 20)
+            pk = rng.randint(170, 220)
             k = f"p{side}{i}"
             css.append(
                 f"@keyframes {k}x{{0%,{a:.2f}%{{transform:translateX(0);opacity:0}}{a + .1:.2f}%{{opacity:1}}"
@@ -497,28 +625,13 @@ def build(d):
                 f"{m:.2f}%{{transform:translateY({-pk}px);animation-timing-function:cubic-bezier(.55,0,.75,.4)}}"
                 f"{b:.2f}%,100%{{transform:translateY({dy_end}px)}}}}"
             )
-            size = rng.choice([10, 11, 12, 14])
-            c = rng.choice(cols)
-            for j, (scale, op) in enumerate(((1, 1), (.7, .45), (.45, .22))):
-                delay = j * 0.035
-                sz = size * scale
-                proj.append(
-                    f'<g class="proj" transform="translate({sx} {sy})"><g style="animation:{k}x {T}s linear {delay:.3f}s infinite">'
-                    f'<g style="animation:{k}y {T}s {delay:.3f}s infinite"><rect class="spin" x="{-sz / 2:.1f}" y="{-sz / 2:.1f}" '
-                    f'width="{sz:.1f}" height="{sz:.1f}" fill="{c}" opacity="{op}"/></g></g></g>'
-                )
-        for col in range(gcols):
-            cx = grid_x + col * (cs + gap) + cs / 2
-            t = t0 + flight * (cx - sx) / (ex - sx)
-            if not (t0 <= t <= t0 + flight):
-                continue
-            p = (t % T) / T * 100
-            css.append(f"@keyframes g{side}{col}{{0%,{p:.2f}%{{opacity:0}}{p + .5:.2f}%{{opacity:.55}}{p + 6:.2f}%,100%{{opacity:0}}}}")
-            proj.append(f'<rect class="proj" x="{cx - cs / 2}" y="{grid_y}" width="{cs}" height="{grows * (cs + gap) - gap}" fill="{cols[0]}" '
-                        f'opacity="0" style="animation:g{side}{col} {T}s linear infinite"/>')
-    css.append(".spin{animation:sp .42s linear infinite;transform-box:fill-box;transform-origin:center}@keyframes sp{to{transform:rotate(360deg)}}")
+            size = (16, 12, 10)[i]
+            proj.append(
+                f'<g class="proj" transform="translate({sx} {sy})"><g style="animation:{k}x {T}s linear infinite">'
+                f'<g style="animation:{k}y {T}s infinite"><g class="spin" style="animation-delay:-{i * .2:.1f}s">{cube(size, cols[i])}</g></g></g></g>'
+            )
 
-    # ---------- impacts
+    # ---------- impacts: a ring, shards, +1, and a shockwave across the floor
     for side in ("L", "R"):
         x, y = figs[side]["chest"]
         p = (hits[side] % T) / T * 100
@@ -530,24 +643,30 @@ def build(d):
                    f".r{side}{{animation:r{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}"
                    f"@keyframes t{side}{{0%,{p:.2f}%{{transform:translateY(0);opacity:0}}{p + .6:.2f}%{{opacity:1}}"
                    f"{p + 18:.2f}%,100%{{transform:translateY(-60px);opacity:0}}}}"
-                   f".t{side}{{animation:t{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}")
+                   f".t{side}{{animation:t{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}"
+                   f"@keyframes w{side}{{0%,{p:.2f}%{{transform:scale(.05);opacity:0}}{p + .4:.2f}%{{opacity:.85}}"
+                   f"{p + 22:.2f}%,100%{{transform:scale(1);opacity:0}}}}"
+                   f".w{side}{{animation:w{side} {T}s cubic-bezier(.16,1,.3,1) infinite}}")
         shards = []
-        for k in range(16):
-            ang = k / 16 * 6.283 + rng.uniform(-.2, .2)
-            rr = rng.randint(40, 90)
-            sz = rng.choice([4, 5, 6, 8])
-            shards.append(f'<rect x="{math.cos(ang) * rr - sz / 2:.1f}" y="{math.sin(ang) * rr - sz / 2:.1f}" width="{sz}" height="{sz}" fill="{rng.choice([CREAM, YEL, ORA, RED])}"/>')
+        for k in range(8):
+            ang = k / 8 * 6.283 + rng.uniform(-.25, .25)
+            rr = rng.randint(44, 90)
+            shards.append(f'<g transform="translate({math.cos(ang) * rr:.1f} {math.sin(ang) * rr:.1f})">'
+                          f'{cube(rng.choice([7, 9, 11]), rng.choice([(CREAM, YEL, ORA), (YEL, ORA, RED), (ORA, RED, "#7a1d10")]))}</g>')
+        # the shockwave: an ellipse lying flat on the floor, running out from the struck end
+        wx, wy = cam.p((-GCOLS / 2 + 3) if side == "L" else (GCOLS / 2 - 3), 0, GROWS * ROW_P / 2)
         body.append(
+            f'<g class="proj" transform="translate({wx:.0f} {wy:.0f})"><ellipse class="w{side}" rx="380" ry="80" fill="none" stroke="{CREAM}" stroke-width="2" opacity="0"/></g>'
             f'<g class="proj" transform="translate({x} {y})">'
             f'<g class="r{side}"><rect x="-46" y="-46" width="92" height="92" fill="none" stroke="{CREAM}" stroke-width="2"/></g>'
             f'<g class="b{side}">{"".join(shards)}</g></g>'
             f'<g class="proj" transform="translate({x} {y - 70})"><text class="t{side}" text-anchor="middle" font-size="18" font-weight="800" fill="{CREAM}">+1</text></g>'
         )
 
-    # ---------- ash: 0/1 chars rising off the figures (instead of fire)
+    # ---------- ash: a few 0/1 rising off the figures
     ash = ['<g class="ash">']
     css.append(".as{animation:as 3.4s linear infinite}@keyframes as{0%{transform:translateY(0);opacity:0}15%{opacity:.9}100%{transform:translateY(-170px);opacity:0}}")
-    for i in range(26):
+    for i in range(12):
         ax = rng.choice([lx, rx]) + rng.randint(10, FW - 10)
         ash.append(f'<text class="as" x="{ax}" y="{H - 30 - rng.randint(0, 60)}" fill="{rng.choice([ORA, RED, YEL, "#7a1d10"])}" '
                    f'style="animation-delay:-{rng.random() * 3.4:.2f}s;animation-duration:{2.6 + rng.random() * 2.2:.2f}s">{rng.choice("01")}</text>')
@@ -555,14 +674,14 @@ def build(d):
     body.append("".join(ash))
     body.extend(proj)
 
-    css.append("@media (prefers-reduced-motion:reduce){*{animation:none!important}.proj,.rgb,.scr{display:none}}")
+    css.append("@media (prefers-reduced-motion:reduce){*{animation:none!important}.proj,.rgb{display:none}}")
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="{d['year']} contributions in the last year">
 <title>{d['year']} contributions in the last year</title>
 <style>{''.join(css)}</style>
 <defs>{''.join(defs)}</defs>
 <rect width="{W}" height="{H}" fill="#000"/>
-<g class="shk" xml:space="preserve">
+<g xml:space="preserve">
 {''.join(body)}
 </g>
 <rect x="0" y="{H - 60}" width="{W}" height="60" fill="url(#fade)"/>
@@ -571,6 +690,12 @@ def build(d):
 
 
 def main():
+    import sys
+    if "--figures-src" in sys.argv:
+        # the sheet scripts/bake.mjs renders into assets/src/figures.json
+        write_figures_src(figure_parts(random.Random(1337)))
+        print("figures.src.svg written; now run: npm run bake")
+        return
     d = fetch()
     with open(OUT, "w") as f:
         f.write(build(d))

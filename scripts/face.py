@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Inject the 0/1 portrait into assets/banner.svg.
+"""Inject the 0/1 portrait into assets/src/banner.src.svg (then `npm run bake` builds
+assets/banner.svg from it).
 
 The portrait is drawn as 0/1 characters (same idea as heroPortrait.js on
 vanniworks.com). The scan line reveals it on one sweep and wipes it on the
@@ -17,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BANNER = os.path.join(ROOT, "assets", "banner.svg")
+BANNER = os.path.join(ROOT, "assets", "src", "banner.src.svg")  # then: npm run bake
 
 W, H = 1280, 460
 CELL = 6.5            # row height / font size

@@ -1,0 +1,11 @@
+{
+  "name": "vanniworks-profile",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bake": "node scripts/bake.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}
