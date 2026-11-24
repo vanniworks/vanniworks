@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  html,
+  body {
+    margin: 0;
+    background: transparent;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+<script type="importmap">
+  { "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
+</script>
+<script type="module">
+  import { render } from '/scripts/creatures.js';
+  const q = new URLSearchParams(location.search);
+  window.result = await render({ side: q.get('side'), part: q.get('part') });
+</script>

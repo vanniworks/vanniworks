@@ -9,11 +9,11 @@
 //     flicker get an overlay
 //   - the wordmark: still fades for the portrait; the glyphs that flash cream are overlays,
 //     grouped by their delay (to the nearest 0.25s)
-// It also bakes the contributions panel's two entities (assets/src/figures.src.svg, written by
-// `python3 scripts/contrib.py --figures-src`) into assets/src/figures.json, which contrib.py
-// embeds, so the GitHub Action keeps building the panel with plain Python.
+// It also renders the contributions panel's two 3D creatures (scripts/creatures.js) into
+// assets/src/figures.json, which contrib.py embeds, so the GitHub Action keeps building the
+// panel with plain Python.
 // Usage: npm run bake  (uses your installed Google Chrome; `npm i` once first)
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -133,27 +133,26 @@ for (const l of layers) {
   l.href = `data:image/${l.opaque ? 'jpeg' : 'webp'};base64,${buf.toString('base64')}`;
 }
 
-/* the contributions panel's two entities: each piece of the sheet contrib.py writes, as a
-   picture in the piece's own coordinates (they sit at 300,300 on the sheet) */
-const FIG_SRC = `${ROOT}assets/src/figures.src.svg`;
-if (existsSync(FIG_SRC)) {
-  const sheet = readFileSync(FIG_SRC, 'utf8');
-  const ids = [...sheet.matchAll(/<g id="([^"]+)"/g)].map((m) => m[1]);
-  const page = await browser.newPage({ viewport: { width: 600, height: 700 }, deviceScaleFactor: 2 });
+/* the contributions panel's two creatures: 3D (scripts/creatures.js), rendered piece by piece
+   (body, throwing arm, hit flash) for each side, with the points the panel aims at */
+{
+  const page = await browser.newPage({ viewport: { width: 400, height: 400 } });
+  // serve the repo (scripts, node_modules/three) to the page
+  await page.route('http://bake.local/**', (route) => {
+    const path = decodeURIComponent(new URL(route.request().url()).pathname);
+    const type = path.endsWith('.html') ? 'text/html' : 'text/javascript';
+    route.fulfill({ body: readFileSync(`${ROOT}${path.slice(1)}`), contentType: type });
+  });
   const out = {};
-  for (const id of ids) {
-    await page.setContent(`<!doctype html><style>html,body{margin:0;background:transparent}svg{display:block}g[id]{display:none}#${id}{display:inline}</style>${sheet}`);
-    const box = await page.evaluate((id) => {
-      const b = document.getElementById(id).getBoundingClientRect();
-      const x = Math.floor(b.x - 1);
-      const y = Math.floor(b.y - 1);
-      return { x, y, width: Math.ceil(b.right + 1) - x, height: Math.ceil(b.bottom + 1) - y };
-    }, id);
-    const buf = await page.screenshot({ clip: box, omitBackground: true, type: 'webp', quality: 88 });
-    out[id] = { x: box.x - 300, y: box.y - 300, w: box.width, h: box.height, href: `data:image/webp;base64,${buf.toString('base64')}` };
-  }
+  for (const side of ['L', 'R'])
+    for (const part of ['body', 'arm', 'flash']) {
+      await page.goto(`http://bake.local/scripts/creatures.html?side=${side}&part=${part}`);
+      const { box, points } = await page.waitForFunction(() => window.result).then((h) => h.jsonValue());
+      const buf = await page.locator('canvas').screenshot({ omitBackground: true, type: 'webp', quality: 88 });
+      out[`${part}${side}`] = { x: box.x, y: box.y, w: box.w, h: box.h, points, href: `data:image/webp;base64,${buf.toString('base64')}` };
+    }
   writeFileSync(`${ROOT}assets/src/figures.json`, JSON.stringify(out));
-  console.log(`figures.json: ${ids.length} pieces, ${(JSON.stringify(out).length / 1024).toFixed(0)} KB`);
+  console.log(`figures.json: 6 pieces, ${(JSON.stringify(out).length / 1024).toFixed(0)} KB`);
 }
 
 await browser.close();

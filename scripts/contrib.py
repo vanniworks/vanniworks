@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Build assets/contrib.svg.
 
-Two horned entities drawn in 0/1 characters hurl spinning contribution cubes at
+Two horned 3D creatures hurl spinning contribution cubes at
 each other across a 3D city of contribution bars, seen in perspective. Every hit
 sends a shockwave across the floor and glitches the count, an extruded 3D number
 built from 0/1 cells.
 
 Built to stay light to animate (phones): the city is a few dozen merged paths,
-and the two entities are pictures baked once by scripts/bake.mjs into
-assets/src/figures.json (`python3 scripts/contrib.py --figures-src`, then
-`npm run bake`). Without that file they fall back to 0/1 text.
+and the two creatures are 3D models (scripts/creatures.js) rendered once by
+`npm run bake` into assets/src/figures.json. Without that file they fall back to
+the old 0/1 text figures.
 
 The grid is made up (it spells VANNI). The numbers are real, from the GitHub
 GraphQL API.
@@ -290,7 +290,6 @@ def arm(facing, rng, fill):
 
 
 FIGS_JSON = os.path.join(ROOT, "assets", "src", "figures.json")
-FIGS_SRC = os.path.join(ROOT, "assets", "src", "figures.src.svg")
 
 GCOLS, GROWS = 53, 7
 LEVEL_H = [0.06, 0.45, 0.85, 1.35, 2.4, 3.5]  # bar heights per level, world units
@@ -414,20 +413,6 @@ def figure_parts(rng):
     return parts
 
 
-def write_figures_src(parts):
-    """A sheet with every figure piece in its own group, for scripts/bake.mjs to render.
-    Each piece sits at (300, 300) in its own coordinates."""
-    css = (f"text{{font-family:{FONT}}}"
-           ".fig text,.arm text{font-size:6px;font-weight:700;white-space:pre}")
-    pieces = []
-    for side, p in parts.items():
-        pieces += [(f"body{side}", "fig", p["body"]), (f"flash{side}", "fig", p["flash"]), (f"arm{side}", "arm", p["arm"])]
-    groups = "".join(f'<g id="{i}" class="{c}" transform="translate(300 300)" xml:space="preserve">{s}</g>' for i, c, s in pieces)
-    os.makedirs(os.path.dirname(FIGS_SRC), exist_ok=True)
-    with open(FIGS_SRC, "w") as f:
-        f.write(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 700" width="600" height="700"><style>{css}</style>{groups}</svg>\n')
-
-
 def piece(baked, key, vector, cls):
     """a baked picture of a figure piece when there is one, else the vector text"""
     b = baked.get(key)
@@ -493,13 +478,17 @@ def build(d):
                 f'<stop offset="1" stop-color="{CREAM}" stop-opacity="0"/>'
                 f'<animateTransform attributeName="gradientTransform" type="translate" values="-60 0;{ncols * ncw + 220} 0;{ncols * ncw + 220} 0" keyTimes="0;.55;1" dur="4.2s" repeatCount="indefinite"/>'
                 f'</linearGradient>')
-    DEPTH = 6  # layers of depth, each a step further back (fewer, thicker steps: lighter to draw)
+    # the depth: every cell swept back up and to the right as one solid shape, all in one path
+    ex, ey = 8.4, -11.0
+    e = ncw - 1
+    sweep = "".join(
+        f"M{c * ncw:.0f} {r * ncw + e:.0f}V{r * ncw:.0f}l{ex} {ey}h{e:.0f}v{e:.0f}l{-ex} {-ey}Z"
+        for c, r in sorted(cells))
+    defs.append(f'<linearGradient id="dep" x1="0" y1="0" x2="0" y2="{nh:.0f}" gradientUnits="userSpaceOnUse">'
+                f'<stop offset="0" stop-color="#7a1d10"/><stop offset="1" stop-color="#2a0905"/></linearGradient>')
     num = [f'<g transform="translate({nx:.1f} {num_y})">',
-           f'<path d="{ghost_d}" fill="#120705"/>']
-    for i in range(DEPTH, 0, -1):  # the back layers first
-        k = i / DEPTH
-        col = shade("#a02a18", 0.18 + 0.5 * (1 - k))
-        num.append(f'<use href="#num" x="{i * 1.4:.2f}" y="{-i * 1.85:.2f}" fill="{col}"/>')
+           f'<path d="{ghost_d}" fill="#120705"/>',
+           f'<path d="{sweep}" fill="url(#dep)"/>']
     num.append(f'<use href="#num" fill="url(#ng)"/>')
     num.append(f'<use href="#num" fill="url(#sheen)"/>')
     # on every hit the face jumps apart into red and cream for a moment
@@ -548,7 +537,11 @@ def build(d):
     x_right, _ = cam.p(GCOLS / 2, 0, 0)
     span = x_right - x_left
     for lv, top in enumerate(LEVEL_TOP):
-        bright = shade(top, 1.55 if lv else 1.12)
+        if lv == 0:
+            # the empty days (most of the tiles) stay still: the band barely showed on them
+            defs.append(f'<linearGradient id="wv0"><stop stop-color="{top}"/></linearGradient>')
+            continue
+        bright = shade(top, 1.55)
         defs.append(f'<linearGradient id="wv{lv}" gradientUnits="userSpaceOnUse" x1="{x_left - 260:.0f}" x2="{x_left - 20:.0f}" y1="0" y2="0">'
                     f'<stop offset="0" stop-color="{top}"/><stop offset=".42" stop-color="{top}"/><stop offset=".5" stop-color="{bright}"/>'
                     f'<stop offset=".58" stop-color="{top}"/><stop offset="1" stop-color="{top}"/>'
@@ -567,7 +560,13 @@ def build(d):
     css.append(".eye{animation:ey 2.8s steps(1) infinite}@keyframes ey{0%,100%{opacity:1}44%{opacity:.55}46%{opacity:1}90%{opacity:0}92%{opacity:1}}")
     figs = {}
     for side, x0, facing, glowc in (("L", lx, 1, YEL), ("R", rx, -1, ORA)):
-        p = parts[side]
+        p = dict(parts[side])
+        # the 3D creatures know where their own eyes, chest, shoulder and hand ended up
+        if baked.get("body" + side):
+            pts = baked["body" + side]["points"]
+            p.update(eyes=pts["eyes"], chest=pts["chest"], shoulder=pts["shoulder"])
+        if baked.get("arm" + side):
+            p.update(hand=baked["arm" + side]["points"]["hand"])
         tp, hp = (throws[side] % T) / T * 100, (hits[side] % T) / T * 100
         s = facing
         css.append(f"@keyframes a{side}{{0%,{tp - 13:.2f}%{{transform:rotate(0)}}{tp - 1:.2f}%{{transform:rotate({-75 * s}deg)}}"
@@ -690,12 +689,6 @@ def build(d):
 
 
 def main():
-    import sys
-    if "--figures-src" in sys.argv:
-        # the sheet scripts/bake.mjs renders into assets/src/figures.json
-        write_figures_src(figure_parts(random.Random(1337)))
-        print("figures.src.svg written; now run: npm run bake")
-        return
     d = fetch()
     with open(OUT, "w") as f:
         f.write(build(d))
